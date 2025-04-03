@@ -3,10 +3,26 @@ const use = require('@tensorflow-models/universal-sentence-encoder');
 const { trainingData } = require('../utils/training-data');
 
 let modelData = null;
+let modelLoading = false;
+let modelLoadAttempts = 0;
+const MAX_LOAD_ATTEMPTS = 3;
 
 async function loadModel() {
+  if (modelLoading) {
+    console.log('Modèle déjà en cours de chargement...');
+    return false;
+  }
+  
+  if (modelLoadAttempts >= MAX_LOAD_ATTEMPTS) {
+    console.error(`Échec après ${MAX_LOAD_ATTEMPTS} tentatives de chargement du modèle`);
+    return false;
+  }
+  
+  modelLoading = true;
+  modelLoadAttempts++;
+  
   try {
-    console.log('Chargement du modèle...');
+    console.log(`Tentative de chargement du modèle (${modelLoadAttempts}/${MAX_LOAD_ATTEMPTS})...`);
     const model = await use.load();
     console.log('Modèle chargé, génération des embeddings...');
     
@@ -18,9 +34,11 @@ async function loadModel() {
 
     modelData = { model, allEmbeddings, intentMapping };
     console.log('Modèle et embeddings prêts!');
+    modelLoading = false;
     return true;
   } catch (error) {
     console.error('Erreur pendant le chargement du modèle:', error);
+    modelLoading = false;
     return false;
   }
 }
@@ -39,6 +57,8 @@ async function recognizeIntent(input) {
   const maxScore = similarities[maxIndex];
   const matchedIntentTag = intentMapping[maxIndex];
 
+  console.log(`Input: "${input}" | Score: ${maxScore.toFixed(2)} | Intent: ${matchedIntentTag}`);
+  
   if (maxScore > 0.5) {
     return trainingData.intents.find(i => i.tag === matchedIntentTag) || null;
   }
@@ -46,14 +66,17 @@ async function recognizeIntent(input) {
 }
 
 async function generateResponse(input) {
-  if (!modelData) {
-    const loaded = await loadModel();
-    if (!loaded) {
-      return { response: "Le service n'est pas encore prêt. Réessayez dans un instant." };
-    }
-  }
-
   try {
+    if (!modelData) {
+      const loaded = await loadModel();
+      if (!loaded) {
+        return { 
+          response: "Le service n'est pas encore prêt. Réessayez dans un instant.",
+          intentTag: "error"
+        };
+      }
+    }
+
     const intent = await recognizeIntent(input);
     if (!intent) {
       return { 
@@ -62,8 +85,9 @@ async function generateResponse(input) {
       };
     }
 
+    const randomResponse = intent.responses[Math.floor(Math.random() * intent.responses.length)];
     return {
-      response: intent.responses[Math.floor(Math.random() * intent.responses.length)],
+      response: randomResponse,
       intentTag: intent.tag,
       followUp: intent.followUp
     };
@@ -76,13 +100,19 @@ async function generateResponse(input) {
   }
 }
 
-// Précharger le modèle au démarrage
-loadModel().then(() => {
-    console.log('Modèle préchargé avec succès!');
+// Précharger le modèle au démarrage avec gestion d'erreur
+setTimeout(() => {
+  loadModel().then(success => {
+    if (success) {
+      console.log('Modèle préchargé avec succès!');
+    } else {
+      console.warn('Échec du préchargement du modèle - les requêtes tenteront de charger à la demande');
+    }
   }).catch(err => {
-    console.error('Erreur pendant le préchargement du modèle:', err);
+    console.error('Erreur inattendue pendant le préchargement du modèle:', err);
   });
-  
-  module.exports = {
-    generateResponse
-  };
+}, 2000); // Petite temporisation pour laisser le serveur démarrer
+
+module.exports = {
+  generateResponse
+};

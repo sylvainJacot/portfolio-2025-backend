@@ -1,5 +1,5 @@
 
-export const trainingData = {
+const trainingData = {
   intents: [
     // Hello
     {
